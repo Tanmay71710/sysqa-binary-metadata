@@ -166,6 +166,7 @@ EOF
           Workflow URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
           
           Files validated: $(find versions -name '*.json' 2>/dev/null | wc -l)
+      continue-on-error: true
     
     - name: Send Teams Notification
       if: always()
@@ -175,6 +176,12 @@ EOF
     - name: Notify Teams
       if: always()
       run: |
+        if [ -z "${{ secrets.TEAMS_WEBHOOK_URL }}" ]; then
+          echo "⚠️ TEAMS_WEBHOOK_URL secret not configured - skipping Teams notification"
+          echo "⚠️ To enable Teams notifications, configure the TEAMS_WEBHOOK_URL secret"
+          exit 0
+        fi
+        
         STATUS="${{ job.status }}"
         EMOJI="✅"
         if [ "$STATUS" = "failure" ]; then
@@ -226,3 +233,4 @@ EOF
               }]
             }]
           }'
+      continue-on-error: true
