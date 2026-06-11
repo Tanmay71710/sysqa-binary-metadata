@@ -7,7 +7,7 @@
   "local_path": "/tmp/nfs-poc/scripts/test_script.sh",
   "artifactory_url": "http://localhost:8081/artifactory/example-repo-local/test_script.sh/1.0.1/test_script.sh",
   "uploaded_by": "jenkins",
-  "uploaded_at": "2026-06-11T23:30:41.826394+00:00",
+  "uploaded_at": "2026-06-11T23:31:43.866754+00:00",
   "tier": "S",
-  "jenkins_build": "1"
+  "jenkins_build": "2"
 }
