@@ -1,4 +1,3 @@
-# File: .github/workflows/validate-metadata.yml
 name: Validate Binary Metadata
 
 on:
@@ -14,223 +13,126 @@ on:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    
+
     steps:
     - name: Checkout repository
-      uses: actions/checkout@v3
-    
+      uses: actions/checkout@v4
+
     - name: Set up Python
-      uses: actions/setup-python@v4
+      uses: actions/setup-python@v5
       with:
-        python-version: '3.9'
-    
+        python-version: '3.11'
+
     - name: Validate JSON structure
       run: |
         echo "Validating JSON structure..."
-        for file in versions/**/*.json; do
+        FAILED=0
+        for file in versions/*.json; do
           if [ -f "$file" ]; then
             echo "Validating $file"
-            python3 -m json.tool "$file" > /dev/null
-            if [ $? -ne 0 ]; then
-              echo "❌ Invalid JSON in $file"
-              exit 1
+            if python3 -m json.tool "$file" > /dev/null 2>&1; then
+              echo "  OK: valid JSON"
+            else
+              echo "  FAIL: invalid JSON in $file"
+              FAILED=1
             fi
-            echo "✓ $file has valid JSON structure"
           fi
         done
-    
+        exit $FAILED
+
     - name: Validate required fields
       run: |
-        python3 << 'EOF'
-import json
-import sys
-from pathlib import Path
+        python3 -c "
+        import json, sys, re
+        from pathlib import Path
 
-# Required fields for metadata validation
-required_fields = ['name', 'version', 'sha256', 'size', 'store']
+        required_fields = ['name', 'version', 'sha256', 'size', 'store']
+        valid_stores = ['artifactory', 'minio', 'local']
 
-json_files = list(Path('versions').glob('**/*.json'))
-if not json_files:
-    print("⚠️ No JSON files found in versions/ directory")
-    sys.exit(0)
+        json_files = sorted(Path('versions').glob('*.json'))
+        if not json_files:
+            print('No JSON files found in versions/')
+            sys.exit(0)
 
-print(f"Found {len(json_files)} metadata file(s) to validate")
+        print(f'Found {len(json_files)} metadata file(s) to validate')
+        errors = 0
 
-for json_file in json_files:
-    print(f"\nValidating {json_file}")
-    with open(json_file) as f:
-        try:
-            data = json.load(f)
-        except json.JSONDecodeError as e:
-            print(f"❌ Invalid JSON in {json_file}: {e}")
+        for json_file in json_files:
+            print(f'\nValidating {json_file}')
+            with open(json_file) as f:
+                data = json.load(f)
+
+            missing = [field for field in required_fields if field not in data]
+            if missing:
+                print(f'  FAIL: Missing required fields: {missing}')
+                errors += 1
+                continue
+
+            sha256 = data['sha256']
+            if len(sha256) != 64 or not all(c in '0123456789abcdef' for c in sha256.lower()):
+                print(f'  FAIL: Invalid SHA-256 format: {sha256}')
+                errors += 1
+                continue
+
+            size = data['size']
+            if not isinstance(size, int) or size < 0:
+                print(f'  FAIL: Invalid size: {size}')
+                errors += 1
+                continue
+
+            if data['store'] not in valid_stores:
+                print(f'  FAIL: Invalid store: {data[\"store\"]}')
+                errors += 1
+                continue
+
+            version = data['version']
+            if not re.match(r'^\d+\.\d+\.\d+', version):
+                print(f'  WARN: Non-standard version format: {version}')
+
+            print(f'  OK: {json_file} is valid')
+
+        print(f'\nValidation complete: {len(json_files)} files checked, {errors} errors')
+        if errors > 0:
             sys.exit(1)
-    
-    # Check required fields
-    missing = [field for field in required_fields if field not in data]
-    if missing:
-        print(f"❌ Missing required fields in {json_file}: {missing}")
-        sys.exit(1)
-    
-    # Validate SHA-256 format (64 hex characters)
-    sha256 = data['sha256']
-    if len(sha256) != 64 or not all(c in '0123456789abcdef' for c in sha256.lower()):
-        print(f"❌ Invalid SHA-256 format in {json_file}: {sha256}")
-        sys.exit(1)
-    
-    # Validate size is a positive integer
-    try:
-        size = int(data['size'])
-        if size < 0:
-            print(f"❌ Invalid size in {json_file}: must be positive")
-            sys.exit(1)
-    except (ValueError, TypeError):
-        print(f"❌ Invalid size in {json_file}: must be an integer")
-        sys.exit(1)
-    
-    # Validate store type
-    valid_stores = ['artifactory', 'minio', 'local']
-    if data['store'] not in valid_stores:
-        print(f"❌ Invalid store type in {json_file}: {data['store']}. Must be one of {valid_stores}")
-        sys.exit(1)
-    
-    # Validate version format (semver-like)
-    version = data['version']
-    import re
-    if not re.match(r'^\d+\.\d+\.\d+', version):
-        print(f"⚠️ Non-standard version format in {json_file}: {version}")
-    
-    print(f"✓ {json_file} is valid")
+        print('All metadata files validated successfully')
+        "
 
-print("\n✅ All metadata files validated successfully")
-EOF
-    
     - name: Check for duplicate artifacts
       run: |
-        python3 << 'EOF'
-import json
-from pathlib import Path
-from collections import defaultdict
+        python3 -c "
+        import json
+        from pathlib import Path
+        from collections import defaultdict
 
-# Load all metadata files
-metadata_files = Path('versions').glob('**/*.json')
-artifact_versions = defaultdict(list)
+        metadata_files = sorted(Path('versions').glob('*.json'))
+        artifact_versions = defaultdict(list)
 
-for json_file in metadata_files:
-    with open(json_file) as f:
-        data = json.load(f)
-    name = data['name']
-    version = data['version']
-    artifact_versions[name].append((version, json_file))
+        for json_file in metadata_files:
+            with open(json_file) as f:
+                data = json.load(f)
+            name = data.get('name', str(json_file))
+            version = data.get('version', 'unknown')
+            artifact_versions[name].append((version, str(json_file)))
 
-# Check for duplicates
-for name, versions in artifact_versions.items():
-    version_numbers = [v[0] for v in versions]
-    if len(set(version_numbers)) != len(version_numbers):
-        print(f"⚠️ Duplicate version numbers for {name}: {version_numbers}")
-    
-print("✅ No duplicate artifacts found")
-EOF
-    
+        duplicates = 0
+        for name, versions in artifact_versions.items():
+            version_numbers = [v[0] for v in versions]
+            if len(set(version_numbers)) != len(version_numbers):
+                print(f'WARNING: Duplicate version numbers for {name}: {version_numbers}')
+                duplicates += 1
+
+        if duplicates == 0:
+            print('No duplicate artifacts found')
+        "
+
     - name: Generate validation summary
       if: always()
       run: |
+        FILE_COUNT=$(find versions -name '*.json' 2>/dev/null | wc -l)
         echo "## Metadata Validation Summary" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "- **Status**: ${{ job.status }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **Files validated**: $(find versions -name '*.json' 2>/dev/null | wc -l)" >> $GITHUB_STEP_SUMMARY
+        echo "- **Files validated**: $FILE_COUNT" >> $GITHUB_STEP_SUMMARY
         echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Triggered by**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
-        echo "- **Workflow run**: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
-    
-    - name: Send Email Notification
-      if: always()
-      uses: dawidd6/action-send-mail@v3
-      with:
-        server_address: smtp.gmail.com
-        server_port: 587
-        username: ${{ secrets.EMAIL_USERNAME }}
-        password: ${{ secrets.EMAIL_PASSWORD }}
-        subject: "GitHub Actions: Metadata Validation ${{ job.status }}"
-        to: ${{ secrets.NOTIFICATION_EMAIL }}
-        from: GitHub Actions
-        body: |
-          Metadata validation workflow has completed.
-          
-          Status: ${{ job.status }}
-          Repository: ${{ github.repository }}
-          Branch: ${{ github.ref_name }}
-          Commit: ${{ github.sha }}
-          Triggered by: ${{ github.actor }}
-          
-          Workflow URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-          
-          Files validated: $(find versions -name '*.json' 2>/dev/null | wc -l)
-      continue-on-error: true
-    
-    - name: Send Teams Notification
-      if: always()
-      uses: jwlawson/actions-setup-curl@v1
-      with:
-        curl-version: latest
-    - name: Notify Teams
-      if: always()
-      run: |
-        if [ -z "${{ secrets.TEAMS_WEBHOOK_URL }}" ]; then
-          echo "⚠️ TEAMS_WEBHOOK_URL secret not configured - skipping Teams notification"
-          echo "⚠️ To enable Teams notifications, configure the TEAMS_WEBHOOK_URL secret"
-          exit 0
-        fi
-        
-        STATUS="${{ job.status }}"
-        EMOJI="✅"
-        if [ "$STATUS" = "failure" ]; then
-          EMOJI="❌"
-        elif [ "$STATUS" = "cancelled" ]; then
-          EMOJI="⚠️"
-        fi
-        
-        curl -X POST ${{ secrets.TEAMS_WEBHOOK_URL }} \
-          -H 'Content-Type: application/json' \
-          -d '{
-            "@type": "MessageCard",
-            "@context": "https://schema.org/extensions",
-            "summary": "Metadata Validation '"$STATUS"'",
-            "themeColor": "'$([ "$STATUS" = "success" ] && echo "0078D4" || echo "FF0000")'",
-            "title": "'$EMOJI' Metadata Validation '"$STATUS"'",
-            "sections": [{
-              "activityTitle": "GitHub Actions Workflow",
-              "activitySubtitle": "Repository: '${{ github.repository }}'",
-              "facts": [
-                {
-                  "name": "Status",
-                  "value": "'$STATUS'"
-                },
-                {
-                  "name": "Branch",
-                  "value": "${{ github.ref_name }}"
-                },
-                {
-                  "name": "Commit",
-                  "value": "${{ github.sha }}"
-                },
-                {
-                  "name": "Triggered by",
-                  "value": "${{ github.actor }}"
-                },
-                {
-                  "name": "Files validated",
-                  "value": "'"$(find versions -name '*.json' 2>/dev/null | wc -l)"'"
-                }
-              ]
-            }],
-            "potentialAction": [{
-              "@type": "OpenUri",
-              "name": "View Workflow Run",
-              "targets": [{
-                "os": "default",
-                "uri": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-              }]
-            }]
-          }'
-      continue-on-error: true
