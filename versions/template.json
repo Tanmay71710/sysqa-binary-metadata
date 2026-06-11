@@ -1,13 +1,12 @@
 {
   "name": "artifact-name",
   "version": "1.0.0",
-  "sha256": "checksum-here",
-  "md5": "checksum-here",
+  "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
   "size": 0,
   "store": "artifactory",
   "repository": "sysqa-poc-generic",
   "path": "sysqa-poc-generic/artifact-name/1.0.0/artifact-name",
-  "nfs_path": "/home/public/path/to/file",
+  "local_path": "/home/public/path/to/file",
   "uploaded_by": "jenkins",
   "uploaded_at": "2024-01-01T00:00:00Z",
   "tier": "S"

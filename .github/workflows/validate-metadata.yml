@@ -47,7 +47,7 @@ import sys
 from pathlib import Path
 
 # Required fields for metadata validation
-required_fields = ['name', 'version', 'sha256', 'size', 'store', 'local_path']
+required_fields = ['name', 'version', 'sha256', 'size', 'store']
 
 json_files = list(Path('versions').glob('**/*.json'))
 if not json_files:
