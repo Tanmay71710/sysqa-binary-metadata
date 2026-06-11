@@ -1,0 +1,12 @@
+{
+  "name": "deploy_script.sh",
+  "version": "1.0.0",
+  "sha256": "df691801611424773f204d9689664fa6e3e734c3e32111b508cb82bff7a3592a",
+  "size": 74,
+  "store": "artifactory",
+  "local_path": "/tmp/nfs-poc/scripts/deploy_script.sh",
+  "uploaded_by": "jenkins",
+  "uploaded_at": "2026-06-11T23:19:56Z",
+  "tier": "S",
+  "jenkins_build": "1"
+}
