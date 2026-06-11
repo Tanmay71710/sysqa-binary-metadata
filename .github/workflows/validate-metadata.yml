@@ -136,3 +136,26 @@ jobs:
         echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Triggered by**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+
+    - name: Send Email Notification
+      if: always()
+      uses: dawidd6/action-send-mail@v3
+      with:
+        server_address: smtp.office365.com
+        server_port: 587
+        username: ${{ secrets.EMAIL_USERNAME }}
+        password: ${{ secrets.EMAIL_PASSWORD }}
+        subject: "Metadata Validation ${{ job.status }} - ${{ github.repository }}"
+        to: ${{ secrets.NOTIFICATION_EMAIL }}
+        from: GitHub Actions <${{ secrets.EMAIL_USERNAME }}>
+        body: |
+          Metadata Validation Workflow - ${{ job.status }}
+
+          Repository : ${{ github.repository }}
+          Branch     : ${{ github.ref_name }}
+          Commit     : ${{ github.sha }}
+          Triggered  : ${{ github.actor }}
+          Files      : $(find versions -name '*.json' 2>/dev/null | wc -l) metadata files validated
+
+          Workflow   : ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+      continue-on-error: true

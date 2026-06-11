@@ -1,13 +1,13 @@
 {
   "name": "test_script.sh",
-  "version": "1.0.1",
+  "version": "1.0.3",
   "sha256": "07ee9fdefe597ef18ae62c6755eba1e62e2b5eee969da1e921c96af3806fa43d",
   "size": 96,
   "store": "artifactory",
   "local_path": "/tmp/nfs-poc/scripts/test_script.sh",
   "artifactory_url": "http://localhost:8081/artifactory/example-repo-local/test_script.sh/1.0.1/test_script.sh",
   "uploaded_by": "jenkins",
-  "uploaded_at": "2026-06-11T23:31:43.866754+00:00",
+  "uploaded_at": "2026-06-11T23:38:16Z",
   "tier": "S",
   "jenkins_build": "2"
 }
