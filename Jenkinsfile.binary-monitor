@@ -1,0 +1,231 @@
+// File: Jenkinsfile.binary-monitor
+// Adapted for local path usage (/tmp/nfs-poc/) instead of NFS server
+
+pipeline {
+    agent any
+    
+    environment {
+        ARTIFACTORY_URL = 'http://172.30.132.240:8081'
+        ARTIFACTORY_REPO = 'sysqa-poc-generic'
+        MINIO_ENDPOINT = 'http://172.30.132.240:9000'
+        MINIO_BUCKET = 'sysqa-poc-vm-images'
+        GITHUB_REPO = 'sysqa-binary-metadata'
+        LOCAL_PATH = '/tmp/nfs-poc'
+        GITHUB_USER = 'Tanmay71710'
+    }
+    
+    triggers {
+        // Run every 30 minutes
+        cron('H/30 * * * *')
+    }
+    
+    stages {
+        stage('Scan Local Directory for Changes') {
+            steps {
+                script {
+                    // Scan local directory for file changes
+                    sh """
+                        find ${env.LOCAL_PATH} -type f -exec sha256sum {} \\; > /tmp/current_checksums.txt
+                    """
+                    
+                    // Compare with previous scan
+                    sh '''
+                        if [ -f /tmp/previous_checksums.txt ]; then
+                            diff /tmp/previous_checksums.txt /tmp/current_checksums.txt > /tmp/changed_files.txt || true
+                        else
+                            cp /tmp/current_checksums.txt /tmp/changed_files.txt
+                        fi
+                    '''
+                    
+                    // Count changed files
+                    def changedFilesCount = sh(script: 'wc -l /tmp/changed_files.txt', returnStdout: true).trim()
+                    echo "Changed files count: ${changedFilesCount}"
+                }
+            }
+        }
+        
+        stage('Process Changed Files') {
+            steps {
+                script {
+                    def changedFiles = readFile('/tmp/changed_files.txt').split('\n')
+                    
+                    changedFiles.each { fileLine ->
+                        if (fileLine.trim()) {
+                            def parts = fileLine.split()
+                            def checksum = parts[0]
+                            def filepath = parts[1]
+                            def filename = filepath.tokenize('/')[-1]
+                            
+                            echo "Processing changed file: ${filename}"
+                            
+                            // Determine tier based on file size
+                            sh """
+                                stat -c "%s" ${filepath} > /tmp/file_size.txt
+                            """
+                            
+                            def fileSize = readFile('/tmp/file_size.txt').trim() as long
+                            
+                            if (fileSize < 1024 * 1024) {
+                                // Tier-S: Small file (< 1 MB)
+                                echo "Tier-S file detected: ${filename} (${fileSize} bytes)"
+                                env.tier = 'S'
+                            } else if (fileSize < 1024 * 1024 * 1024) {
+                                // Tier-M: Medium file (1 MB - 1 GB)
+                                echo "Tier-M file detected: ${filename} (${fileSize} bytes)"
+                                env.tier = 'M'
+                            } else {
+                                // Tier-L: Large file (≥ 1 GB)
+                                echo "Tier-L file detected: ${filename} (${fileSize} bytes)"
+                                env.tier = 'L'
+                            }
+                            
+                            // Set environment variables for next stages
+                            env.filename = filename
+                            env.filepath = filepath
+                            env.checksum = checksum
+                        }
+                    }
+                }
+            }
+        }
+        
+        stage('Upload to Artifactory') {
+            when {
+                expression { return env.tier != 'L' }
+            }
+            steps {
+                script {
+                    // Calculate checksums
+                    sh """
+                        sha256sum ${env.filepath} > /tmp/${env.filename}.sha256
+                        md5sum ${env.filepath} > /tmp/${env.filename}.md5
+                    """
+                    
+                    // Upload to Artifactory using JFrog CLI
+                    withCredentials([usernamePassword(credentialsId: 'artifactory-creds', 
+                        usernameVariable: 'ART_USER', passwordVariable: 'ART_PASS')]) {
+                        sh """
+                            jf config add artifactory-local --url=${env.ARTIFACTORY_URL} --user=${ART_USER} --password=${ART_PASS}
+                            jf rt upload ${env.filepath} ${env.ARTIFACTORY_REPO}/${env.filename}/1.0.0/${env.filename}
+                        """
+                    }
+                    
+                    // Verify upload
+                    sh """
+                        jf rt download ${env.ARTIFACTORY_REPO}/${env.filename}/1.0.0/${env.filename} /tmp/verify_${env.filename}
+                        sha256sum /tmp/verify_${env.filename} > /tmp/verify_checksum.txt
+                    """
+                    
+                    def originalChecksum = readFile('/tmp/${env.filename}.sha256').split()[0]
+                    def verifyChecksum = readFile('/tmp/verify_checksum.txt').split()[0]
+                    
+                    if (originalChecksum != verifyChecksum) {
+                        error("Checksum mismatch! Upload verification failed.")
+                    }
+                    
+                    echo "Successfully uploaded ${env.filename} to Artifactory"
+                }
+            }
+        }
+        
+        stage('Upload to MinIO') {
+            when {
+                expression { return env.tier == 'L' }
+            }
+            steps {
+                script {
+                    // Upload to MinIO using mc client
+                    withCredentials([usernamePassword(credentialsId: 'minio-creds',
+                        usernameVariable: 'MINIO_ACCESS', passwordVariable: 'MINIO_SECRET')]) {
+                        sh """
+                            mc alias set myminio ${env.MINIO_ENDPOINT} ${MINIO_ACCESS} ${MINIO_SECRET}
+                            mc cp ${env.filepath} myminio/${env.MINIO_BUCKET}/${env.filename}/1.0.0/${env.filename}
+                        """
+                    }
+                    
+                    // Verify upload
+                    sh """
+                        mc cp myminio/${env.MINIO_BUCKET}/${env.filename}/1.0.0/${env.filename} /tmp/verify_${env.filename}
+                        sha256sum /tmp/verify_${env.filename} > /tmp/verify_checksum.txt
+                    """
+                    
+                    def originalChecksum = readFile('/tmp/${env.filename}.sha256').split()[0]
+                    def verifyChecksum = readFile('/tmp/verify_checksum.txt').split()[0]
+                    
+                    if (originalChecksum != verifyChecksum) {
+                        error("Checksum mismatch! MinIO upload verification failed.")
+                    }
+                    
+                    echo "Successfully uploaded ${env.filename} to MinIO"
+                }
+            }
+        }
+        
+        stage('Update GitHub Metadata') {
+            steps {
+                script {
+                    // Clone metadata repo
+                    withCredentials([string(credentialsId: 'github-token', variable: 'GITHUB_TOKEN')]) {
+                        sh """
+                            git clone https://${GITHUB_TOKEN}@github.com/${env.GITHUB_USER}/${env.GITHUB_REPO}.git /tmp/metadata
+                        """
+                    }
+                    
+                    // Create metadata directory
+                    sh """
+                        mkdir -p /tmp/metadata/versions/${env.filename}
+                    """
+                    
+                    // Get file size
+                    def fileSize = readFile('/tmp/file_size.txt').trim() as long
+                    
+                    // Create metadata file
+                    def metadata = """{
+  "name": "${env.filename}",
+  "version": "1.0.0",
+  "sha256": "${env.checksum}",
+  "md5": "PLACEHOLDER",
+  "size": ${fileSize},
+  "store": """ + (env.tier == 'L' ? '"minio"' : '"artifactory"') + """,
+  "repository": """ + (env.tier == 'L' ? "${env.MINIO_BUCKET}" : "${env.ARTIFACTORY_REPO}") + """,
+  "path": """ + (env.tier == 'L' ? "${env.MINIO_BUCKET}/${env.filename}/1.0.0/${env.filename}" : "${env.ARTIFACTORY_REPO}/${env.filename}/1.0.0/${env.filename}") + """,
+  "nfs_path": "${env.filepath}",
+  "uploaded_by": "jenkins",
+  "uploaded_at": "${new Date().format("yyyy-MM-dd'T'HH:mm:ss'Z")}",
+  "tier": "${env.tier}"
+}"""
+                    
+                    writeFile "/tmp/metadata/versions/${env.filename}/1.0.0.json", metadata
+                    writeFile "/tmp/metadata/versions/${env.filename}/latest.json", metadata
+                    
+                    // Commit and push
+                    withCredentials([string(credentialsId: 'github-token', variable: 'GITHUB_TOKEN')]) {
+                        sh """
+                            cd /tmp/metadata
+                            git config user.name "Jenkins CI"
+                            git config user.email "jenkins@localhost"
+                            git add .
+                            git commit -m "chore: auto-version ${env.filename} → 1.0.0 [build ${env.BUILD_NUMBER}]"
+                            git push https://${GITHUB_TOKEN}@github.com/${env.GITHUB_USER}/${env.GITHUB_REPO}.git main
+                        """
+                    }
+                    
+                    echo "Successfully updated metadata for ${env.filename}"
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            // Save current checksums for next comparison
+            sh 'cp /tmp/current_checksums.txt /tmp/previous_checksums.txt'
+        }
+        success {
+            echo "Binary migration completed successfully"
+        }
+        failure {
+            echo "Binary migration failed - check logs for details"
+        }
+    }
+}
