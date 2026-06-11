@@ -140,3 +140,89 @@ EOF
         echo "- **Files validated**: $(find versions -name '*.json' 2>/dev/null | wc -l)" >> $GITHUB_STEP_SUMMARY
         echo "- **Branch**: ${{ github.ref_name }}" >> $GITHUB_STEP_SUMMARY
         echo "- **Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Triggered by**: ${{ github.actor }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Workflow run**: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" >> $GITHUB_STEP_SUMMARY
+    
+    - name: Send Email Notification
+      if: always()
+      uses: dawidd6/action-send-mail@v3
+      with:
+        server_address: smtp.gmail.com
+        server_port: 587
+        username: ${{ secrets.EMAIL_USERNAME }}
+        password: ${{ secrets.EMAIL_PASSWORD }}
+        subject: "GitHub Actions: Metadata Validation ${{ job.status }}"
+        to: ${{ secrets.NOTIFICATION_EMAIL }}
+        from: GitHub Actions
+        body: |
+          Metadata validation workflow has completed.
+          
+          Status: ${{ job.status }}
+          Repository: ${{ github.repository }}
+          Branch: ${{ github.ref_name }}
+          Commit: ${{ github.sha }}
+          Triggered by: ${{ github.actor }}
+          
+          Workflow URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          
+          Files validated: $(find versions -name '*.json' 2>/dev/null | wc -l)
+    
+    - name: Send Teams Notification
+      if: always()
+      uses: jwlawson/actions-setup-curl@v1
+      with:
+        curl-version: latest
+    - name: Notify Teams
+      if: always()
+      run: |
+        STATUS="${{ job.status }}"
+        EMOJI="✅"
+        if [ "$STATUS" = "failure" ]; then
+          EMOJI="❌"
+        elif [ "$STATUS" = "cancelled" ]; then
+          EMOJI="⚠️"
+        fi
+        
+        curl -X POST ${{ secrets.TEAMS_WEBHOOK_URL }} \
+          -H 'Content-Type: application/json' \
+          -d '{
+            "@type": "MessageCard",
+            "@context": "https://schema.org/extensions",
+            "summary": "Metadata Validation '"$STATUS"'",
+            "themeColor": "'$([ "$STATUS" = "success" ] && echo "0078D4" || echo "FF0000")'",
+            "title": "'$EMOJI' Metadata Validation '"$STATUS"'",
+            "sections": [{
+              "activityTitle": "GitHub Actions Workflow",
+              "activitySubtitle": "Repository: '${{ github.repository }}'",
+              "facts": [
+                {
+                  "name": "Status",
+                  "value": "'$STATUS'"
+                },
+                {
+                  "name": "Branch",
+                  "value": "${{ github.ref_name }}"
+                },
+                {
+                  "name": "Commit",
+                  "value": "${{ github.sha }}"
+                },
+                {
+                  "name": "Triggered by",
+                  "value": "${{ github.actor }}"
+                },
+                {
+                  "name": "Files validated",
+                  "value": "'"$(find versions -name '*.json' 2>/dev/null | wc -l)"'"
+                }
+              ]
+            }],
+            "potentialAction": [{
+              "@type": "OpenUri",
+              "name": "View Workflow Run",
+              "targets": [{
+                "os": "default",
+                "uri": "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+              }]
+            }]
+          }'
