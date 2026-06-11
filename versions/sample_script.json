@@ -1,0 +1,11 @@
+{
+  "name": "sample_script.sh",
+  "version": "1.0.0",
+  "sha256": "9888b4411ad48788fde00e4a17394ae5eccbddebf2079c2b333de075a5cd5638",
+  "size": 27,
+  "store": "local",
+  "local_path": "/tmp/nfs-poc/scripts/sample_script.sh",
+  "uploaded_by": "jenkins",
+  "uploaded_at": "2026-06-11T09:00:00Z",
+  "tier": "S"
+}
