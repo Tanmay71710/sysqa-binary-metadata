@@ -1,0 +1,10 @@
+{
+  "name": "LinuxVMwareOVA.ova",
+  "version": "1.0.1",
+  "sha256": "9b6ce55f379e9771551de6939556a7e6b949814ae27c2f5cfd5dbeb378ce7c2a",
+  "size": 1024,
+  "store": "artifactory",
+  "uploaded_by": "jenkins-bot",
+  "uploaded_at": "2026-03-22T14:30:00+00:00",
+  "jenkins_build": "#156"
+}
